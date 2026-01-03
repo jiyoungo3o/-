@@ -1,0 +1,22 @@
+import pandas as pd
+from sklearn.feature_extraction.text import CountVectorizer
+
+# 엑셀 파일 불러오기
+data = pd.read_excel('/content/파일 이름')  # 'filtered_tokens' 컬럼이 포함된 파일
+
+# TF(단어 빈도) 분석
+cv = CountVectorizer(ngram_range=(1, 1))  # ngram_range=(1,1) → 단일 단어 기준
+tdm = cv.fit_transform(data['filtered_tokens'])
+
+# 단어와 빈도수를 데이터프레임으로 변환
+word_count_tf = pd.DataFrame({
+    '단어': cv.get_feature_names_out(),
+    '빈도': tdm.sum(axis=0).flat
+})
+
+# 빈도 내림차순 정렬 및 인덱스 재설정
+word_count_tf = word_count_tf.sort_values('빈도', ascending=False).reset_index(drop=True)
+word_count_tf.index = word_count_tf.index + 1
+
+# 결과 저장
+word_count_tf.to_excel('tf_word_count.xlsx', index=False)
