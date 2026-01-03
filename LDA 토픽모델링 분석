@@ -1,0 +1,82 @@
+# 1. Java, KoNLPy, Gensim, pyLDAvis 설치
+!apt-get update
+!apt-get install -y openjdk-8-jdk
+!pip install konlpy gensim pyLDAvis
+import pyLDAvis.gensim_models as gensimvis
+import pyLDAvis
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+
+# 2. 라이브러리 임포트
+import pandas as pd
+import re
+from konlpy.tag import Okt
+from gensim import corpora, models
+from gensim.models.coherencemodel import CoherenceModel
+import matplotlib.pyplot as plt
+from google.colab import files
+import ast
+
+# 3. 파일 업로드
+# uploaded = files.upload() # This line is commented out as the file is already present
+
+# 4. CSV 데이터 불러오기 및 한글과 공백만 추출
+filename = '파일 이름' # Use the existing filename
+df = pd.read_csv(filename)
+
+# Use the 'filtered_tokens_str' column and split by space to get tokens
+df['tokens'] = df['filtered_tokens_str'].apply(lambda x: x.split() if isinstance(x, str) else [])
+
+
+# 5. 토큰화 및 키워드 제외 설정
+okt = Okt()
+excluded_keywords = []  # 여기서 제외할 키워드 입력 가능
+
+# Since 'tokens' column now contains lists of strings, no need for okt.nouns or re.sub
+tokenized_docs = [[word for word in doc if word not in excluded_keywords] for doc in df['tokens']]
+
+# 6. 사전 및 말뭉치(corpus) 생성
+dictionary = corpora.Dictionary(tokenized_docs)
+corpus = [dictionary.doc2bow(doc) for doc in tokenized_docs]
+
+# 7. LDA 학습 및 응집도·혼잡도 계산, pyLDAvis 시각화 HTML 저장
+coherence_values = []
+perplexity_values = []
+
+for num_topics in range(2, 10):
+    lda_model = models.LdaModel(corpus,
+                                num_topics=num_topics,
+                                id2word=dictionary,
+                                passes=15,
+                                random_state=100)
+    vis = gensimvis.prepare(lda_model, corpus, dictionary)
+    pyLDAvis.save_html(vis, f'lda_{num_topics}_topics.html')  # HTML 저장
+
+    # 응집도 계산
+    coherence_model = CoherenceModel(model=lda_model, texts=tokenized_docs,
+                                     dictionary=dictionary, coherence='c_v')
+    coherence_lda = coherence_model.get_coherence()
+    coherence_values.append(coherence_lda)
+
+    # 혼잡도 계산 (log perplexity 값)
+    perplexity = lda_model.log_perplexity(corpus)
+    perplexity_values.append(perplexity)
+
+# 8. 응집도 시각화
+plt.figure(figsize=(10, 5))
+plt.plot(range(2, 10), coherence_values, marker='o', color='blue')
+plt.xlabel('Number of Topics')
+plt.ylabel('Coherence Score')
+plt.title('Coherence Scores by Number of Topics')
+plt.grid(True)
+plt.show()
+
+# 9. 혼잡도 시각화
+plt.figure(figsize=(10, 5))
+plt.plot(range(2, 10), perplexity_values, marker='x', color='red')
+plt.xlabel('Number of Topics')
+plt.ylabel('Log Perplexity')
+plt.title('Log Perplexity by Number of Topics')
+plt.grid(True)
+plt.show()
