@@ -1,0 +1,86 @@
+# 0. 설치 (코랩에서 최초 1회만)
+!pip install konlpy
+
+# 1. 라이브러리 임포트
+import re
+import pandas as pd
+from konlpy.tag import Okt
+
+# 2. 데이터 로드
+#   예: 컬럼 = ['video_id', 'author', 'text']
+df = pd.read_csv('파일 이름')
+
+# 3. 공백 포함 고유명사 목록 (텍스트 전처리 단계에서 먼저 붙여야 할 표현)
+MERGE_PHRASES = [
+    '아이리 칸나', # 예시
+    # 필요에 따라 추가
+]
+
+# 4. "토큰 단위"에서 다시 합칠 표현 (공백 없이 잘못 쪼개진 것)
+#    칸나로마트 처리 포함
+MERGE_TOKEN_PAIRS = {
+
+    ('칸나', '로'): '칸나로',        # ['칸나','로','마트'] 중 앞 부분 합치기
+    ('칸나로', '마트'): '칸나로마트', # ['칸나로','마트'] -> 최종
+    ('칸나', '로마트'): '칸나로마트', # 혹시 이렇게 나오는 경우까지 대비
+    ('아이', '리'): '아이리',
+    ('아이리', '칸나'): '아이리칸나',
+}
+
+# 5. 전처리 함수: 텍스트 차원에서 먼저 붙이기 + 가벼운 정제
+def preprocess_text(text: str) -> str:
+    text = str(text)
+
+    # 5-1) 공백 포함 고유명사 붙이기
+    for phrase in MERGE_PHRASES:
+        merged = phrase.replace(' ', '_')  # '아이리 칸나' -> '아이리_칸나'
+        text = text.replace(phrase, merged)
+
+    # 5-2) (선택) 한글/공백/밑줄만 남기기
+    text = re.sub('[^가-힣ㄱ-ㅎㅏ-ㅣ\\s_]', ' ', text)
+
+    # 5-3) 공백 정리
+    text = re.sub('\\s+', ' ', text).strip()
+
+    return text
+
+# 6. 형태소 분석기 초기화
+okt = Okt()
+
+# 7. 형태소 분석 + 1차 토큰화
+def tokenize(text: str):
+    pre = preprocess_text(text)
+    return okt.morphs(pre)
+
+df['tokens'] = df['text'].apply(tokenize)
+
+# 8. 토큰 리스트 후처리: 잘못 쪼개진 토큰 병합
+def merge_tokens(token_list):
+    merged = []
+    i = 0
+    while i < len(token_list):
+        if i < len(token_list) - 1:
+            pair = (token_list[i], token_list[i+1])
+            if pair in MERGE_TOKEN_PAIRS:
+                merged.append(MERGE_TOKEN_PAIRS[pair])
+                i += 2
+                continue
+        merged.append(token_list[i])
+        i += 1
+    return merged
+
+# 9. 병합을 한두 번 적용 (칸나로마트처럼 단계적으로 합쳐야 할 때)
+df['tokens_merged'] = df['tokens'].apply(merge_tokens)
+df['tokens_merged'] = df['tokens_merged'].apply(merge_tokens)
+
+# 10. 샘플 확인 (디버깅용)
+print("원문:", df['text'].iloc[0])
+print("전처리 후:", preprocess_text(df['text'].iloc[0]))
+print("토큰:", df['tokens'].iloc[0])
+print("병합 후 토큰:", df['tokens_merged'].iloc[0])
+
+# 11. 결과 저장
+df.to_csv('1_youtube_comments_tokens_merged.csv',
+          index=False,
+          encoding='utf-8-sig')
+print("전처리 + 형태소 분석 + 토큰 병합 결과 저장 완료.")
