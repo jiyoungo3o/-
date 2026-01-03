@@ -1,0 +1,30 @@
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+version = 'ver1'
+
+# 1. 엑셀 파일 불러오기
+data = pd.read_excel('/content/파일 이름')  # 이미 전처리된 텍스트 컬럼 포함
+
+# 2. TF-IDF 계산 (불용어 설정 + ngram_range 설정 가능)
+custom_stopwords = {'진짜'}  # 삭제할 단어들
+tfidf_vectorizer = TfidfVectorizer(
+    max_features=None,
+    stop_words=list(custom_stopwords),
+    ngram_range=(1, 1)
+)
+
+# 전처리 완료된 컬럼 이름에 맞게 수정해서 사용 (예: 'cleaned_text' 또는 'text')
+tfidf_matrix = tfidf_vectorizer.fit_transform(data['cleaned_text'])
+
+# 3. 단어 리스트와 평균 TF-IDF 값 계산
+feature_names = tfidf_vectorizer.get_feature_names_out()
+avg_tfidf = tfidf_matrix.mean(axis=0).A1
+
+tfidf_scores = pd.DataFrame({'word': feature_names, 'avg_tfidf': avg_tfidf})
+
+# 4. top 100 단어 추출
+top100_words = tfidf_scores.sort_values(by='avg_tfidf', ascending=False).head(100)
+
+# 5. 엑셀 파일로 저장
+top100_words.to_excel('/content/2_top100_tfidf_words_scaled.xlsx', index=False)
