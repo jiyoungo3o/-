@@ -1,0 +1,221 @@
+import pandas as pd
+from collections import Counter
+from itertools import combinations
+import networkx as nx
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import platform
+import os
+import numpy as np
+import shutil
+
+# =========================
+# 1. 댓글 토큰 데이터 로드 및 공동출현 엣지 생성
+# =========================
+
+df = pd.read_csv('파일 이름', encoding='utf-8')
+df['tokens_merged'] = df['tokens_merged'].fillna('').astype(str)
+df['tokens'] = df['tokens_merged'].str.split()
+
+def build_cooccurrence_edges(token_lists, min_cooccurrence=2):
+    cooc_counts = Counter()
+    for tokens in token_lists:
+        tokens = set(tokens)  # 한 댓글 내 중복 단어 제거
+        for pair in combinations(sorted(tokens), 2):
+            cooc_counts[pair] += 1
+    edges = [
+        (w1, w2, cnt)
+        for (w1, w2), cnt in cooc_counts.items()
+        if cnt >= min_cooccurrence
+    ]
+    return edges
+
+edges = build_cooccurrence_edges(df['tokens'], min_cooccurrence=2)
+
+edges_df = pd.DataFrame(edges, columns=['word1', 'word2', 'weight'])
+print(edges_df.head())
+edges_df.to_excel('1_cooccurrence_edges.xlsx', index=False)
+
+# =========================
+# 2. 한글 폰트 설치 (코랩 / 리눅스 환경용)
+# =========================
+
+# 코랩에서만 사용되는 쉘 명령
+!sudo apt-get update -qq > /dev/null
+!sudo apt-get install fonts-nanum -qq > /dev/null
+!sudo fc-cache -fv > /dev/null
+
+# matplotlib 캐시 삭제
+cache_dir = os.path.expanduser('~/.cache/matplotlib')
+if os.path.exists(cache_dir):
+    shutil.rmtree(cache_dir)
+
+print("Nanum Gothic font installed and matplotlib cache cleared.")
+
+# =========================
+# 3. 단어 빈도 데이터, 엣지 데이터 불러오기
+# =========================
+
+freq_df = pd.read_excel('파일 이름')  # 'token', 'freq' 컬럼 포함 가정
+top_words = freq_df.sort_values('freq', ascending=False).head(40)['token'].tolist()
+
+# 방금 만든 공동출현 엣지 파일 사용
+edges_df = pd.read_excel('1_cooccurrence_edges.xlsx')  # 'word1', 'word2', 'weight'
+
+# 상위 40개 단어에 해당하는 엣지만 필터링
+filtered_edges = edges_df[
+    (edges_df['word1'].isin(top_words)) &
+    (edges_df['word2'].isin(top_words))
+].copy()
+
+# =========================
+# 4. 네트워크 그래프 생성 및 기본 지표
+# =========================
+
+G = nx.Graph()
+for _, row in filtered_edges.iterrows():
+    G.add_edge(row['word1'], row['word2'], weight=row['weight'])
+
+degree_dict = dict(G.degree())
+top_n = 40
+top_nodes = sorted(degree_dict, key=degree_dict.get, reverse=True)[:top_n]
+
+print(f"노드 수: {G.number_of_nodes()}")
+print(f"엣지 수: {G.number_of_edges()}")
+
+# 네트워크 밀도
+network_density = nx.density(G)
+print(f"네트워크 밀도: {network_density:.4f}")
+
+# 연결 중심성 기반 네트워크 집중도
+degree_centrality = nx.degree_centrality(G)
+max_centrality = max(degree_centrality.values())
+centralization = max_centrality
+print(f"네트워크 집중도(연결 중심성): {centralization:.4f}")
+
+# =========================
+# 5. 한글 폰트 설정
+# =========================
+
+if platform.system() == 'Linux':
+    cache_dir = os.path.expanduser('~/.cache/matplotlib')
+    if os.path.exists(cache_dir):
+        shutil.rmtree(cache_dir)
+
+    font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
+    font_prop = fm.FontProperties(fname=font_path)
+    plt.rcParams['font.family'] = font_prop.get_name()
+else:
+    font_path = None
+    plt.rcParams['font.family'] = 'AppleGothic'
+
+# =========================
+# 6. 네트워크 시각화
+# =========================
+
+plt.figure(figsize=(12, 10), dpi=500)
+pos = nx.spring_layout(G, k=3.5, seed=42)
+weights = [G[u][v]['weight'] for u, v in G.edges()]
+
+nx.draw_networkx_nodes(G, pos, node_color='skyblue', node_size=50)
+nx.draw_networkx_edges(G, pos, width=[w * 0.08 for w in weights], alpha=0.3)
+
+for node in top_nodes:
+    x, y = pos[node]
+    label = f"{node} ({degree_dict[node]})"
+    if font_path:
+        plt.text(
+            x, y - 0.04, label, fontsize=14, fontproperties=font_prop,
+            bbox=dict(boxstyle='round,pad=0.1', fc='#fffacd', alpha=0.8, edgecolor='none'),
+            horizontalalignment='center', verticalalignment='center'
+        )
+    else:
+        plt.text(
+            x, y - 0.04, label, fontsize=14,
+            bbox=dict(boxstyle='round,pad=0.1', fc='#fffacd', alpha=0.8, edgecolor='none'),
+            horizontalalignment='center', verticalalignment='center'
+        )
+
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+
+# =========================
+# 7. 중심성 계산 및 저장
+# =========================
+
+top_words_in_graph = [w for w in top_words if w in G.nodes()]
+
+degree_centrality = nx.degree_centrality(G)
+betweenness = nx.betweenness_centrality(G)
+closeness = nx.closeness_centrality(G)
+
+degree_centrality_percent = {k: round(v * 100, 2) for k, v in degree_centrality.items()}
+betweenness_percent = {k: round(v * 100, 2) for k, v in betweenness.items()}
+closeness_rounded = {k: round(v, 3) for k, v in closeness.items()}
+
+centrality_df = pd.DataFrame({
+    '핵심단어': top_words_in_graph,
+    '연결중심성(%)': [degree_centrality_percent[w] for w in top_words_in_graph],
+    '매개중심성(%)': [betweenness_percent[w] for w in top_words_in_graph],
+    '연결': [G.degree(w) for w in top_words_in_graph],
+    '근접': [closeness_rounded[w] for w in top_words_in_graph],
+})
+
+centrality_df['매개중심성(%)'] = centrality_df['매개중심성(%)'].round(3)
+centrality_df['근접'] = centrality_df['근접'].round(3)
+
+centrality_df.insert(0, '순', range(1, len(centrality_df) + 1))
+
+print(centrality_df)
+centrality_df.to_excel('1_word_centrality_table.xlsx', index=False)
+
+# =========================
+# 8. 노드별 연관 단어·가중치 표 생성
+# =========================
+
+def get_top_related_words(G, top_nodes, top_n_relations=10):
+    results = {}
+    for node in top_nodes:
+        edges = G.edges(node, data=True)
+        neighbors = sorted(edges, key=lambda x: x[2]['weight'], reverse=True)[:top_n_relations]
+        related_words = [(nbr[1] if nbr[0] == node else nbr[0], nbr[2]['weight']) for nbr in neighbors]
+        results[node] = related_words
+    return results
+
+top_related_words = get_top_related_words(G, top_nodes, top_n_relations=10)
+
+rows = []
+for node in top_nodes:
+    for rel, w in top_related_words[node]:
+        rows.append({
+            '중심단어': node,
+            '연결중심성': degree_dict[node],
+            '연관단어': rel,
+            '가중치': w
+        })
+related_df = pd.DataFrame(rows)
+
+print(related_df.head(100))
+related_df.to_excel('1_related_words_weights.xlsx', index=False)
+
+# =========================
+# 9. 특정 두 단어 사이의 가중치 조회 + 전체 엣지리스트 저장
+# =========================
+
+word1 = '스트리머'
+word2 = '서버'
+if G.has_edge(word1, word2):
+    weight = G[word1][word2]['weight']
+    print(f"{word1} - {word2} 사이의 가중치: {weight}")
+else:
+    print(f"{word1} - {word2} 사이에 엣지가 없음")
+
+edge_list = []
+for u, v, d in G.edges(data=True):
+    edge_list.append({'단어1': u, '단어2': v, '가중치': d['weight']})
+
+edges_full_df = pd.DataFrame(edge_list)
+print("엣지리스트 일부:")
+print(edges_full_df.head())
+edges_full_df.to_excel('edge_weight_list.xlsx', index=False)
